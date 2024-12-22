@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Stop Cloud Scheduler Job</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    button {
+      padding: 15px 30px;
+      font-size: 18px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #3e8e41;
+    }
+  </style>
+</head>
+<body>
+  <button id="stopButton">Stop Cloud Scheduler Job</button>
+
+  <script>
+    const stopButton = document.getElementById('stopButton');
+
+    stopButton.addEventListener('click', async () => {
+      try {
+        const response = await fetch('/stop-job', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          alert(data.message);
+        } else {
+          const errorData = await response.json();
+          alert(`Error: ${errorData.error}\nDetails: ${errorData.details}`);
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        alert('An unexpected error occurred.');
+      }
+    });
+  </script>
+</body>
+</html>
