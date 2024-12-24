@@ -45,8 +45,8 @@ async function getMetadata(path) {
 async function getProjectAndLocation() {
   try {
     const projectId = await getMetadata('project/project-id');
-    const zone = await getMetadata('instance/zone'); // Returns in the format 'projects/PROJECT_NUMBER/zones/ZONE'
-    const location = zone.split('/').pop().match(/^(.*)-\d$/)[1]; // Extract location from zone (e.g., 'us-central1' from 'us-central1-a')
+    const region = await getMetadata('instance/region'); // Returns in the format 'projects/PROJECT_NUMBER/regions/REGION'
+    const location = region.split('/').pop
     return { projectId, location };
   } catch (error) {
     throw new Error('Error getting project ID and/or location from metadata server: ' + error.message);
@@ -98,6 +98,7 @@ const server = http.createServer(async (req, res) => {
     });
   } else if (pathname === '/stop-job' && req.method === 'POST') {
     console.log('Received request to stop job.');
+    console.log('Job stopping process initiated');
 
     try {
       // Get project ID and location from metadata server
@@ -108,6 +109,8 @@ const server = http.createServer(async (req, res) => {
 
       // Cloud Scheduler API endpoint
       const cloudSchedulerEndpoint = `https://cloudscheduler.googleapis.com/v1/projects/${projectId}/locations/${location}/jobs/${jobName}:pause`;
+
+      console.log(`Pausing ${cloudSchedulerEndpoint}...`);
 
       const postOptions = {
         method: 'POST',
