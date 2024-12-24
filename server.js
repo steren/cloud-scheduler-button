@@ -46,7 +46,7 @@ async function getProjectAndLocation() {
   try {
     const projectId = await getMetadata('project/project-id');
     const region = await getMetadata('instance/region'); // Returns in the format 'projects/PROJECT_NUMBER/regions/REGION'
-    const location = region.split('/').pop
+    const location = region.split('/').pop();
     return { projectId, location };
   } catch (error) {
     throw new Error('Error getting project ID and/or location from metadata server: ' + error.message);
