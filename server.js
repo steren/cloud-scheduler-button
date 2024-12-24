@@ -128,13 +128,13 @@ const server = http.createServer(async (req, res) => {
 
         apiRes.on('end', () => {
           if (apiRes.statusCode === 200) {
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ message: `Job ${jobName} paused successfully.` }));
+            res.setHeader('Content-Type', 'text/html');
+            res.end(`<p>Job ${jobName} paused successfully.</p>`);
           } else {
             console.error(`Error pausing job: ${apiRes.statusCode} - ${apiRes.statusMessage}`);
             res.statusCode = apiRes.statusCode;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'Failed to pause job.', details: apiData }));
+            res.setHeader('Content-Type', 'text/html');
+            res.end(`<p>Error: Failed to pause job. Details: ${apiData}</p>`);
           }
         });
       });
@@ -142,8 +142,8 @@ const server = http.createServer(async (req, res) => {
       apiReq.on('error', (error) => {
         console.error('Error making API request:', error);
         res.statusCode = 500;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: 'Failed to pause job.', details: error.message }));
+        res.setHeader('Content-Type', 'text/html');
+        res.end(`<p>Error: Failed to pause job. Details: ${error.message}</p>`);
       });
 
       // Send an empty body as per the API docs for the pause endpoint
@@ -155,8 +155,8 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       console.error('Error:', error);
       res.statusCode = 500;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: 'Failed to pause job.', details: error.message }));
+      res.setHeader('Content-Type', 'text/html');
+      res.end(`<p>Error: Failed to pause job. Details: ${error.message}</p>`);
     }
   } else if (pathname === '/start-job' && req.method === 'POST') {
     console.log('Received request to start job.');
@@ -190,13 +190,13 @@ const server = http.createServer(async (req, res) => {
 
         apiRes.on('end', () => {
           if (apiRes.statusCode === 200) {
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ message: `Job ${jobName} started successfully.` }));
+            res.setHeader('Content-Type', 'text/html');
+            res.end(`<p>Job ${jobName} started successfully.</p>`);
           } else {
             console.error(`Error starting job: ${apiRes.statusCode} - ${apiRes.statusMessage}`);
             res.statusCode = apiRes.statusCode;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'Failed to start job.', details: apiData }));
+            res.setHeader('Content-Type', 'text/html');
+            res.end(`<p>Error: Failed to start job. Details: ${apiData}</p>`);
           }
         });
       });
@@ -204,8 +204,8 @@ const server = http.createServer(async (req, res) => {
       apiReq.on('error', (error) => {
         console.error('Error making API request:', error);
         res.statusCode = 500;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: 'Failed to start job.', details: error.message }));
+        res.setHeader('Content-Type', 'text/html');
+        res.end(`<p>Error: Failed to start job. Details: ${error.message}</p>`);
       });
 
       // Send an empty body as per the API docs for the start endpoint
@@ -217,8 +217,8 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       console.error('Error:', error);
       res.statusCode = 500;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: 'Failed to start job.', details: error.message }));
+      res.setHeader('Content-Type', 'text/html');
+      res.end(`<p>Error: Failed to start job. Details: ${error.message}</p>`);
     }
   } else {
     res.statusCode = 404;

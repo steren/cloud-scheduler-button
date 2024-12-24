@@ -27,58 +27,11 @@
   </style>
 </head>
 <body>
-  <button id="stopButton">Stop Cloud Scheduler Job</button>
-  <button id="startButton">Start Cloud Scheduler Job</button>
-
-  <script>
-    const stopButton = document.getElementById('stopButton');
-    const startButton = document.getElementById('startButton');
-
-    stopButton.addEventListener('click', async () => {
-      console.log('Stop button clicked');
-      try {
-        const response = await fetch('/stop-job', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          alert(data.message);
-        } else {
-          const errorData = await response.json();
-          alert(`Error: ${errorData.error}\nDetails: ${errorData.details}`);
-        }
-      } catch (error) {
-        console.error('Error:', error);
-        alert('An unexpected error occurred.');
-      }
-    });
-
-    startButton.addEventListener('click', async () => {
-      console.log('Start button clicked');
-      try {
-        const response = await fetch('/start-job', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          alert(data.message);
-        } else {
-          const errorData = await response.json();
-          alert(`Error: ${errorData.error}\nDetails: ${errorData.details}`);
-        }
-      } catch (error) {
-        console.error('Error:', error);
-        alert('An unexpected error occurred.');
-      }
-    });
-  </script>
+  <form action="/stop-job" method="POST">
+    <button type="submit">Stop Cloud Scheduler Job</button>
+  </form>
+  <form action="/start-job" method="POST">
+    <button type="submit">Start Cloud Scheduler Job</button>
+  </form>
 </body>
 </html>
