@@ -102,31 +102,32 @@ const server = http.createServer(async (req, res) => {
 
     try {
       // Get project ID and location from metadata server
-      const { projectId, location } = await getProjectAndLocation();
+      const { projectId, location: defaultLocation } = await getProjectAndLocation();
+      const location = process.env.REGION || defaultLocation;
 
       // Get the auth token from the metadata server
       const authToken = await getTokenFromMetadataServer();
 
-      // Cloud Scheduler API endpoint
-      const cloudSchedulerEndpoint = `https://cloudscheduler.googleapis.com/v1/projects/${projectId}/locations/${location}/jobs/${jobName}:pause`;
-
-      console.log(`Pausing ${cloudSchedulerEndpoint}...`);
-
-      const postOptions = {
+      // Cloud Scheduler API endpoint for stopping the job
+      const options = {
+        hostname: 'cloudscheduler.googleapis.com',
+        path: `/v1/projects/${projectId}/locations/${location}/jobs/${jobName}:pause`,
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json',
-        },
+          'Content-Type': 'application/json'
+        }
       };
 
-      const apiReq = https.request(cloudSchedulerEndpoint, postOptions, (apiRes) => {
+      const apiReq = https.request(options, (apiRes) => {
         let apiData = '';
-        apiRes.on('data', (chunk) => apiData += chunk);
+
+        apiRes.on('data', (chunk) => {
+          apiData += chunk;
+        });
+
         apiRes.on('end', () => {
           if (apiRes.statusCode === 200) {
-            console.log(`Job ${jobName} paused successfully.`);
-            res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ message: `Job ${jobName} paused successfully.` }));
           } else {
@@ -149,11 +150,75 @@ const server = http.createServer(async (req, res) => {
       apiReq.write(JSON.stringify({}));
       apiReq.end();
 
+      console.log('Job stopping process initiated');
+
     } catch (error) {
       console.error('Error:', error);
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ error: 'Failed to pause job.', details: error.message }));
+    }
+  } else if (pathname === '/start-job' && req.method === 'POST') {
+    console.log('Received request to start job.');
+    console.log('Job starting process initiated');
+
+    try {
+      // Get project ID and location from metadata server
+      const { projectId, location: defaultLocation } = await getProjectAndLocation();
+      const location = process.env.REGION || defaultLocation;
+
+      // Get the auth token from the metadata server
+      const authToken = await getTokenFromMetadataServer();
+
+      // Cloud Scheduler API endpoint for starting the job
+      const options = {
+        hostname: 'cloudscheduler.googleapis.com',
+        path: `/v1/projects/${projectId}/locations/${location}/jobs/${jobName}:resume`,
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      };
+
+      const apiReq = https.request(options, (apiRes) => {
+        let apiData = '';
+
+        apiRes.on('data', (chunk) => {
+          apiData += chunk;
+        });
+
+        apiRes.on('end', () => {
+          if (apiRes.statusCode === 200) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ message: `Job ${jobName} started successfully.` }));
+          } else {
+            console.error(`Error starting job: ${apiRes.statusCode} - ${apiRes.statusMessage}`);
+            res.statusCode = apiRes.statusCode;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Failed to start job.', details: apiData }));
+          }
+        });
+      });
+
+      apiReq.on('error', (error) => {
+        console.error('Error making API request:', error);
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Failed to start job.', details: error.message }));
+      });
+
+      // Send an empty body as per the API docs for the start endpoint
+      apiReq.write(JSON.stringify({}));
+      apiReq.end();
+
+      console.log('Job starting process initiated');
+
+    } catch (error) {
+      console.error('Error:', error);
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Failed to start job.', details: error.message }));
     }
   } else {
     res.statusCode = 404;
