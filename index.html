@@ -1,62 +1,202 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Cloud Scheduler Job Control</title>
+  <meta charset="utf-8">
+  <title>{{jobName}} · Cloud Scheduler</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕒</text></svg>">
   <style>
+    :root {
+      --bg: #f3f4f6;
+      --card: #ffffff;
+      --text: #1f2328;
+      --muted: #656d76;
+      --border: #e2e5e9;
+      --green: #1a7f37;
+      --green-bg: #dafbe1;
+      --amber: #9a6700;
+      --amber-bg: #fff4c2;
+      --red: #cf222e;
+      --red-bg: #ffe5e3;
+      --grey-bg: #eaeef2;
+      --primary: #1a73e8;
+      --primary-hover: #1558b8;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1216;
+        --card: #1a1e24;
+        --text: #e6edf3;
+        --muted: #9199a3;
+        --border: #2d333b;
+        --green: #4ac26b;
+        --green-bg: #12301c;
+        --amber: #e0a920;
+        --amber-bg: #3a2d05;
+        --red: #ff7b72;
+        --red-bg: #42161a;
+        --grey-bg: #2d333b;
+        --primary: #4c8df6;
+        --primary-hover: #6ea3f8;
+      }
+    }
+    * { box-sizing: border-box; }
     body {
-      font-family: sans-serif;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      min-height: 100vh;
       display: flex;
       justify-content: center;
       align-items: center;
-      height: 100vh;
-      margin: 0;
-      flex-direction: column;
-      padding: 20px;
-      box-sizing: border-box;
-      text-align: center;
+      padding: 16px;
+      line-height: 1.4;
+    }
+    main {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+    }
+    .eyebrow {
+      margin: 0 0 4px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
     }
     h1 {
-      margin-bottom: 20px;
+      margin: 0;
+      font-size: 22px;
+      overflow-wrap: anywhere;
     }
-    button {
-      padding: 15px 30px;
-      font-size: 18px;
-      color: white;
-      border: none;
-      cursor: pointer;
-      margin: 10px;
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .badge.enabled { color: var(--green); background: var(--green-bg); }
+    .badge.paused { color: var(--amber); background: var(--amber-bg); }
+    .badge.failed { color: var(--red); background: var(--red-bg); }
+    .badge.unknown { color: var(--muted); background: var(--grey-bg); }
+    .summary {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+    .error {
+      margin: 16px 0 0;
+      padding: 12px 14px;
+      border-radius: 10px;
+      color: var(--red);
+      background: var(--red-bg);
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+    dl {
+      margin: 20px 0 0;
+      border-top: 1px solid var(--border);
+    }
+    dl div {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    dt {
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    dd {
+      margin: 0;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      background: var(--grey-bg);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    .hint {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .result { font-weight: 600; }
+    .result.good { color: var(--green); }
+    .result.bad { color: var(--red); }
+    .actions {
+      margin-top: 24px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .actions form { flex: 1 1 140px; }
+    button, .refresh {
+      display: block;
       width: 100%;
-      max-width: 300px;
+      padding: 13px 20px;
+      font: inherit;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      cursor: pointer;
     }
-    .stop-button {
-      background-color: #f44336;
+    button.resume { background: var(--primary); color: #fff; }
+    button.resume:hover { background: var(--primary-hover); }
+    button.pause { background: transparent; color: var(--red); border-color: var(--red); }
+    button.pause:hover { background: var(--red-bg); }
+    .refresh {
+      flex: 1 1 100%;
+      padding: 8px;
+      font-weight: 400;
+      font-size: 14px;
+      color: var(--muted);
     }
-    .stop-button:hover {
-      background-color: #d32f2f;
-    }
-    .start-button {
-      background-color: #4CAF50;
-    }
-    .start-button:hover {
-      background-color: #3e8e41;
-    }
-    @media (max-width: 600px) {
-      button {
-        font-size: 16px;
-        padding: 12px 24px;
-      }
-    }
+    .refresh:hover { color: var(--text); }
+    :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   </style>
 </head>
 <body>
-  <h1>Cloud Scheduler Job Control</h1>
-  <form action="/stop-job" method="POST">
-    <button type="submit" class="stop-button">Stop</button>
-  </form>
-  <form action="/start-job" method="POST">
-    <button type="submit" class="start-button">Start</button>
-  </form>
+  <main>
+    <p class="eyebrow">Cloud Scheduler job</p>
+    <header>
+      <h1>{{jobName}}</h1>
+      {{badge}}
+    </header>
+    <p class="summary">{{summary}}</p>
+    {{error}}
+    {{details}}
+    <div class="actions">
+      {{actions}}
+      <a class="refresh" href="/">Refresh status</a>
+    </div>
+  </main>
 </body>
 </html>

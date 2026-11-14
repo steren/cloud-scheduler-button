@@ -1,6 +1,5 @@
 const http = require('http');
 const https = require('https');
-const url = require('url');
 const fs = require('fs');
 const path = require('path');
 
@@ -10,16 +9,14 @@ if (!jobName) {
   throw new Error('Environment variable JOB_NAME not set.');
 }
 
-// Metadata server endpoints
-const metadataBaseUrl = 'http://metadata.google.internal/computeMetadata/v1/';
-const metadataHeaders = { 'Metadata-Flavor': 'Google' };
+const template = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 
-// Function to get metadata from the server
-async function getMetadata(path) {
+// Get a value from the metadata server
+function getMetadata(metadataPath) {
   const options = {
     hostname: 'metadata.google.internal',
-    path: `/computeMetadata/v1/${path}`,
-    headers: metadataHeaders,
+    path: `/computeMetadata/v1/${metadataPath}`,
+    headers: { 'Metadata-Flavor': 'Google' },
   };
 
   return new Promise((resolve, reject) => {
@@ -37,188 +34,194 @@ async function getMetadata(path) {
     req.on('error', (error) => {
       reject(new Error('Error requesting metadata: ' + error.message));
     });
-    req.end();
   });
 }
 
-// Get project ID and location from metadata server
-async function getProjectAndLocation() {
-  try {
-    const projectId = await getMetadata('project/project-id');
-    const region = await getMetadata('instance/region'); // Returns in the format 'projects/PROJECT_NUMBER/regions/REGION'
-    const location = region.split('/').pop();
-    return { projectId, location };
-  } catch (error) {
-    throw new Error('Error getting project ID and/or location from metadata server: ' + error.message);
+// Project and location never change for a running instance: resolve them once
+let jobPathPromise;
+function getJobPath() {
+  if (!jobPathPromise) {
+    jobPathPromise = (async () => {
+      const projectId = await getMetadata('project/project-id');
+      let location = process.env.REGION;
+      if (!location) {
+        // Returns in the format 'projects/PROJECT_NUMBER/regions/REGION'
+        const region = await getMetadata('instance/region');
+        location = region.split('/').pop();
+      }
+      return `/v1/projects/${projectId}/locations/${location}/jobs/${jobName}`;
+    })();
+    jobPathPromise.catch(() => { jobPathPromise = null; });
   }
+  return jobPathPromise;
 }
 
-// Get token from metadata server
-async function getTokenFromMetadataServer() {
+async function getToken() {
+  const data = await getMetadata('instance/service-accounts/default/token');
+  return JSON.parse(data).access_token;
+}
+
+// Call the Cloud Scheduler API on the job. `action` is '', ':pause' or ':resume'.
+// Resolves with the Job resource.
+async function callScheduler(method, action = '') {
+  const [jobPath, token] = await Promise.all([getJobPath(), getToken()]);
+  const body = method === 'POST' ? '{}' : null;
+  const options = {
+    hostname: 'cloudscheduler.googleapis.com',
+    path: jobPath + action,
+    method,
+    headers: { 'Authorization': `Bearer ${token}` },
+  };
+  if (body) {
+    options.headers['Content-Type'] = 'application/json';
+    options.headers['Content-Length'] = Buffer.byteLength(body);
+  }
+
   return new Promise((resolve, reject) => {
-    const req = http.get(metadataBaseUrl + 'instance/service-accounts/default/token', { headers: metadataHeaders }, (res) => {
+    const req = https.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => data += chunk);
       res.on('end', () => {
-        if (res.statusCode === 200) {
-          try {
-            const tokenData = JSON.parse(data);
-            resolve(tokenData.access_token);
-          } catch (error) {
-            reject(new Error('Error parsing token from metadata server: ' + error.message));
-          }
+        let parsed;
+        try { parsed = JSON.parse(data); } catch (e) { /* not JSON */ }
+        if (res.statusCode === 200 && parsed) {
+          resolve(parsed);
         } else {
-          reject(new Error(`Error getting token from metadata server: ${res.statusCode} - ${res.statusMessage}`));
+          const detail = (parsed && parsed.error && parsed.error.message) || data || res.statusMessage;
+          reject(new Error(`Cloud Scheduler API returned ${res.statusCode}: ${detail}`));
         }
       });
     });
     req.on('error', (error) => {
-      reject(new Error('Error requesting token from metadata server: ' + error.message));
+      reject(new Error('Error calling Cloud Scheduler API: ' + error.message));
     });
-    req.end();
+    req.end(body || undefined);
   });
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+// "in 5 minutes" / "2 hours ago"
+function relativeTime(date, now = new Date()) {
+  const seconds = Math.round((date - now) / 1000);
+  const abs = Math.abs(seconds);
+  const units = [['day', 86400], ['hour', 3600], ['minute', 60]];
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  for (const [unit, size] of units) {
+    if (abs >= size) return rtf.format(Math.round(seconds / size), unit);
+  }
+  return seconds >= 0 ? 'in less than a minute' : 'less than a minute ago';
+}
+
+// Absolute time in the job's own time zone, with a relative hint
+function formatTime(timestamp, timeZone) {
+  const date = new Date(timestamp);
+  if (isNaN(date)) return escapeHtml(timestamp);
+  const options = { dateStyle: 'medium', timeStyle: 'short' };
+  let absolute;
+  try {
+    absolute = new Intl.DateTimeFormat('en', { ...options, timeZone }).format(date);
+  } catch (e) {
+    absolute = new Intl.DateTimeFormat('en', { ...options, timeZone: 'UTC' }).format(date) + ' UTC';
+  }
+  return `<time datetime="${escapeHtml(date.toISOString())}">${escapeHtml(absolute)}</time>` +
+    ` <span class="hint">${escapeHtml(relativeTime(date))}</span>`;
+}
+
+const STATES = {
+  ENABLED: { label: 'Enabled', className: 'enabled', summary: 'The job runs on its schedule.' },
+  PAUSED: { label: 'Paused', className: 'paused', summary: 'The job will not run until it is resumed.' },
+  DISABLED: { label: 'Disabled', className: 'failed', summary: 'The job was disabled by the system after an error.' },
+  UPDATE_FAILED: { label: 'Update failed', className: 'failed', summary: 'The last update of the job failed.' },
+};
+
+const pauseButton = '<form action="/stop-job" method="POST"><button type="submit" class="pause">Pause job</button></form>';
+const resumeButton = '<form action="/start-job" method="POST"><button type="submit" class="resume">Resume job</button></form>';
+
+function renderPage({ job, error }) {
+  let badge = '<span class="badge unknown">Unknown</span>';
+  let summary = 'The status of the job could not be retrieved.';
+  let details = '';
+  // Without a known state, offer both actions
+  let actions = pauseButton + resumeButton;
+
+  if (job) {
+    const state = STATES[job.state] ||
+      { label: job.state || 'Unknown', className: 'unknown', summary: '' };
+    badge = `<span class="badge ${state.className}">${escapeHtml(state.label)}</span>`;
+    summary = state.summary;
+
+    const rows = [];
+    if (job.description) rows.push(['Description', escapeHtml(job.description)]);
+    if (job.schedule) {
+      rows.push(['Schedule', `<code>${escapeHtml(job.schedule)}</code>` +
+        (job.timeZone ? ` <span class="hint">${escapeHtml(job.timeZone)}</span>` : '')]);
+    }
+    if (job.state === 'ENABLED' && job.scheduleTime) {
+      rows.push(['Next run', formatTime(job.scheduleTime, job.timeZone)]);
+    }
+    if (job.lastAttemptTime) {
+      rows.push(['Last run', formatTime(job.lastAttemptTime, job.timeZone)]);
+      const failed = job.status && job.status.code;
+      rows.push(['Last result', failed
+        ? `<span class="result bad">Failed</span> <span class="hint">${escapeHtml(job.status.message || 'code ' + job.status.code)}</span>`
+        : '<span class="result good">Succeeded</span>']);
+    } else {
+      rows.push(['Last run', '<span class="hint">Never</span>']);
+    }
+    details = '<dl>' + rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('') + '</dl>';
+
+    if (job.state === 'ENABLED') actions = pauseButton;
+    else if (job.state === 'PAUSED') actions = resumeButton;
+    else actions = '';
+  }
+
+  const values = {
+    jobName: escapeHtml(jobName),
+    badge,
+    summary: escapeHtml(summary),
+    error: error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : '',
+    details,
+    actions,
+  };
+  return template.replace(/\{\{(\w+)\}\}/g, (match, key) => (key in values ? values[key] : match));
+}
+
+function sendPage(res, statusCode, model) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(renderPage(model));
 }
 
 // Main request handler
 const server = http.createServer(async (req, res) => {
-  const parsedUrl = url.parse(req.url, true);
-  const pathname = parsedUrl.pathname;
+  const pathname = new URL(req.url, 'http://localhost').pathname;
 
-  if (pathname === '/') {
-    const filePath = path.join(__dirname, 'index.html');
-    fs.readFile(filePath, (err, data) => {
-      if (err) {
-        res.statusCode = 500;
-        res.end('Error loading index.html');
-      } else {
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'text/html');
-        res.end(data);
-      }
-    });
-  } else if (pathname === '/stop-job' && req.method === 'POST') {
-    console.log('Received request to stop job.');
-    console.log('Job stopping process initiated');
-
+  if (pathname === '/' && req.method === 'GET') {
     try {
-      // Get project ID and location from metadata server
-      const { projectId, location: defaultLocation } = await getProjectAndLocation();
-      const location = process.env.REGION || defaultLocation;
-
-      // Get the auth token from the metadata server
-      const authToken = await getTokenFromMetadataServer();
-
-      // Cloud Scheduler API endpoint for stopping the job
-      const options = {
-        hostname: 'cloudscheduler.googleapis.com',
-        path: `/v1/projects/${projectId}/locations/${location}/jobs/${jobName}:pause`,
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json'
-        }
-      };
-
-      const apiReq = https.request(options, (apiRes) => {
-        let apiData = '';
-
-        apiRes.on('data', (chunk) => {
-          apiData += chunk;
-        });
-
-        apiRes.on('end', () => {
-          if (apiRes.statusCode === 200) {
-            res.setHeader('Content-Type', 'text/html');
-            res.end(`<p>Job ${jobName} paused successfully.</p>`);
-          } else {
-            console.error(`Error pausing job: ${apiRes.statusCode} - ${apiRes.statusMessage}`);
-            res.statusCode = apiRes.statusCode;
-            res.setHeader('Content-Type', 'text/html');
-            res.end(`<p>Error: Failed to pause job. Details: ${apiData}</p>`);
-          }
-        });
-      });
-
-      apiReq.on('error', (error) => {
-        console.error('Error making API request:', error);
-        res.statusCode = 500;
-        res.setHeader('Content-Type', 'text/html');
-        res.end(`<p>Error: Failed to pause job. Details: ${error.message}</p>`);
-      });
-
-      // Send an empty body as per the API docs for the pause endpoint
-      apiReq.write(JSON.stringify({}));
-      apiReq.end();
-
-      console.log('Job stopping process initiated');
-
+      sendPage(res, 200, { job: await callScheduler('GET') });
     } catch (error) {
-      console.error('Error:', error);
-      res.statusCode = 500;
-      res.setHeader('Content-Type', 'text/html');
-      res.end(`<p>Error: Failed to pause job. Details: ${error.message}</p>`);
+      console.error('Error getting job:', error);
+      sendPage(res, 502, { error: error.message });
     }
-  } else if (pathname === '/start-job' && req.method === 'POST') {
-    console.log('Received request to start job.');
-    console.log('Job starting process initiated');
-
+  } else if ((pathname === '/stop-job' || pathname === '/start-job') && req.method === 'POST') {
+    const action = pathname === '/stop-job' ? 'pause' : 'resume';
+    console.log(`Received request to ${action} job.`);
     try {
-      // Get project ID and location from metadata server
-      const { projectId, location: defaultLocation } = await getProjectAndLocation();
-      const location = process.env.REGION || defaultLocation;
-
-      // Get the auth token from the metadata server
-      const authToken = await getTokenFromMetadataServer();
-
-      // Cloud Scheduler API endpoint for starting the job
-      const options = {
-        hostname: 'cloudscheduler.googleapis.com',
-        path: `/v1/projects/${projectId}/locations/${location}/jobs/${jobName}:resume`,
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json'
-        }
-      };
-
-      const apiReq = https.request(options, (apiRes) => {
-        let apiData = '';
-
-        apiRes.on('data', (chunk) => {
-          apiData += chunk;
-        });
-
-        apiRes.on('end', () => {
-          if (apiRes.statusCode === 200) {
-            res.setHeader('Content-Type', 'text/html');
-            res.end(`<p>Job ${jobName} started successfully.</p>`);
-          } else {
-            console.error(`Error starting job: ${apiRes.statusCode} - ${apiRes.statusMessage}`);
-            res.statusCode = apiRes.statusCode;
-            res.setHeader('Content-Type', 'text/html');
-            res.end(`<p>Error: Failed to start job. Details: ${apiData}</p>`);
-          }
-        });
-      });
-
-      apiReq.on('error', (error) => {
-        console.error('Error making API request:', error);
-        res.statusCode = 500;
-        res.setHeader('Content-Type', 'text/html');
-        res.end(`<p>Error: Failed to start job. Details: ${error.message}</p>`);
-      });
-
-      // Send an empty body as per the API docs for the start endpoint
-      apiReq.write(JSON.stringify({}));
-      apiReq.end();
-
-      console.log('Job starting process initiated');
-
+      await callScheduler('POST', ':' + action);
+      // Redirect so that the page shows the new status and can be safely reloaded
+      res.statusCode = 303;
+      res.setHeader('Location', '/');
+      res.end();
     } catch (error) {
-      console.error('Error:', error);
-      res.statusCode = 500;
-      res.setHeader('Content-Type', 'text/html');
-      res.end(`<p>Error: Failed to start job. Details: ${error.message}</p>`);
+      console.error(`Error trying to ${action} job:`, error);
+      const job = await callScheduler('GET').catch(() => null);
+      sendPage(res, 502, { job, error: `Failed to ${action} job. ${error.message}` });
     }
   } else {
     res.statusCode = 404;
